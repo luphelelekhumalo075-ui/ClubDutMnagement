@@ -176,3 +176,88 @@ def update_password():
     db.session.commit()
     flash('Password updated successfully!', 'success')
     return redirect('/dashboard/profile')
+    
+@dashboard_bp.route('/api/activity-feed')
+@login_required
+def activity_feed():
+    """Get recent activity for dashboard"""
+    try:
+        activities = []
+        
+        # Get recent announcements
+        if current_user.role == 'admin':
+            announcements = Announcement.query.order_by(Announcement.created_at.desc()).limit(5).all()
+        elif current_user.role == 'leader':
+            active_clubs = Club.query.filter_by(status='active').all()
+            club_ids = [c.id for c in active_clubs]
+            announcements = Announcement.query.filter(Announcement.club_id.in_(club_ids)).order_by(Announcement.created_at.desc()).limit(5).all()
+        else:
+            memberships = Membership.query.filter_by(user_id=current_user.id, status='active').all()
+            club_ids = [m.club_id for m in memberships]
+            announcements = Announcement.query.filter(Announcement.club_id.in_(club_ids)).order_by(Announcement.created_at.desc()).limit(5).all()
+        
+        for announcement in announcements:
+            activities.append({
+                'type': 'announcement',
+                'title': announcement.title,
+                'description': f'New announcement posted',
+                'user': announcement.creator.name,
+                'timestamp': announcement.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'url': f"/announcements/{announcement.id}",
+                'icon': 'bullhorn',
+                'color': 'primary'
+            })
+        
+        # Get recent club activities
+        if current_user.role in ['admin', 'leader']:
+            recent_memberships = Membership.query.order_by(Membership.created_at.desc()).limit(5).all()
+            for membership in recent_memberships:
+                activities.append({
+                    'type': 'membership',
+                    'title': f'{membership.user.name} joined {membership.club.club_name}',
+                    'description': 'New club member',
+                               'user': membership.user.name,
+                    'timestamp': membership.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    'url': f"/clubs/{membership.club_id}",
+                    'icon': 'user-plus',
+                    'color': 'success'
+                })
+        
+        # Sort by timestamp
+        activities.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        return jsonify(activities[:10])
+        
+    except Exception as e:
+        print(f"❌ Activity feed error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@dashboard_bp.route('/api/quick-stats')
+@login_required
+def quick_stats():
+    """Get quick statistics for dashboard"""
+    try:
+        stats = {}
+        
+        if current_user.role == 'admin':
+            stats['users'] = User.query.count()
+            stats['clubs'] = Club.query.count()
+            stats['announcements'] = Announcement.query.count()
+            stats['events'] = Event.query.count()
+        elif current_user.role == 'leader':
+            stats['clubs'] = Club.query.filter_by(status='active').count()
+            stats['announcements'] = Announcement.query.join(Club).filter(Club.status == 'active').count()
+            stats['events'] = Event.query.join(Club).filter(Club.status == 'active').count()
+        else:
+            memberships = Membership.query.filter_by(user_id=current_user.id, status='active').all()
+            club_ids = [m.club_id for m in memberships]
+            stats['clubs'] = len(memberships)
+            stats['announcements'] = Announcement.query.filter(Announcement.club_id.in_(club_ids)).count()
+            stats['events'] = Event.query.filter(Event.club_id.in_(club_ids), Event.start_time >= datetime.now()).count()
+        
+        return jsonify(stats)
+        
+    except Exception as e:
+        print(f"❌ Quick stats error: {e}")
+        return jsonify({'error': str(e)}), 500
+
